@@ -125,3 +125,29 @@ def test_payments_never_create_purchases_or_stock(shop):
     shop.post("/supplier-payments", {"supplier_id": shop.sup["Supplier A"], "amount": 100, "payment_mode": "cash"})
     d = shop.get(f"/journals/{jid}").json()
     assert d["stock"]["totals"]["purchased"] == 1 and len(d["purchases"]["entries"]) == 1
+
+
+def test_inactive_fish_rejected_for_new_purchase_but_allowed_for_existing_edit(shop):
+    jid = _journal(shop)
+    fid = shop.fish["Rohu"]
+
+    purchase = shop.buy(jid, "Supplier A", "Rohu", 10, 100).json()
+
+    deactivated = shop.c.patch(f"{P}/fish/{fid}", json={"is_active": False})
+    assert deactivated.status_code == 200
+
+    # A new purchase using inactive fish must be rejected.
+    assert shop.buy(jid, "Supplier A", "Rohu", 5, 100).status_code == 422
+
+    # Editing an existing purchase without changing its fish remains allowed.
+    body = {
+        "supplier_id": shop.sup["Supplier A"],
+        "fish_id": fid,
+        "quantity": 12,
+        "rate": 100,
+        "paid_now": 0,
+        "payment_mode": None,
+    }
+    updated = shop.put(f"/purchases/{purchase['id']}", body)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["quantity"] == 12

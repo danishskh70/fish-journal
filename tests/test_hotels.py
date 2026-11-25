@@ -141,3 +141,23 @@ def test_hotel_sale_edit_delete_only_when_open(shop):
     shop.close(j, Rohu=0, Katla=0, Pomfret=0)
     assert shop.put(f"/hotel-sales/{s['id']}", upd).status_code == 409
     assert shop.c.delete(f"{P}/hotel-sales/{s['id']}").status_code == 409
+
+
+def test_inactive_fish_rejected_for_new_hotel_sale_but_allowed_for_existing_edit(shop):
+    jid = _journal(shop)
+    fid = shop.fish["Rohu"]
+    hid = shop.hotel["Hotel A"]
+
+    sale = shop.sell(jid, "Hotel A", "Rohu", 5).json()
+
+    deactivated = shop.c.patch(f"{P}/fish/{fid}", json={"is_active": False})
+    assert deactivated.status_code == 200
+
+    # A new hotel sale using inactive fish must be rejected.
+    assert shop.sell(jid, "Hotel A", "Rohu", 2).status_code == 422
+
+    # Editing an existing sale without changing its fish remains allowed.
+    body = {"hotel_id": hid, "fish_id": fid, "quantity": 6}
+    updated = shop.put(f"/hotel-sales/{sale['id']}", body)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["quantity"] == 6

@@ -10,6 +10,7 @@ import uuid
 import jwt
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from . import models as m
@@ -85,15 +86,44 @@ def revoke_all_refresh_tokens(db: Session, owner_id: int):
 def rotate_refresh_token(db: Session, token: str) -> dict:
     claims = decode_token(token, "refresh")
     owner = db.get(m.OwnerAccount, int(claims["sub"]))
-    row = db.query(m.RefreshToken).filter(m.RefreshToken.jti == claims.get("jti")).one_or_none()
-    if owner is None or row is None or claims.get("ver") != owner.token_version:
+
+    if owner is None or claims.get("ver") != owner.token_version:
         raise _unauthorized()
-    if row.revoked:
-        # a used/revoked refresh token came back: assume theft, kill every session
-        revoke_all_refresh_tokens(db, owner.id)
-        db.commit()
-        raise _unauthorized("Refresh token already used. Please log in again.")
-    row.revoked = True
+
+    jti = claims.get("jti")
+    if not jti:
+        raise _unauthorized()
+
+    now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+
+    # Atomically consume the refresh token. Only one concurrent request
+    # can change revoked from False to True.
+    result = db.execute(
+        update(m.RefreshToken)
+        .where(
+            m.RefreshToken.jti == jti,
+            m.RefreshToken.owner_id == owner.id,
+            m.RefreshToken.revoked.is_(False),
+            m.RefreshToken.expires_at > now,
+        )
+        .values(revoked=True)
+        .execution_options(synchronize_session=False)
+    )
+
+    if result.rowcount != 1:
+        row = db.query(m.RefreshToken).filter(
+            m.RefreshToken.jti == jti,
+            m.RefreshToken.owner_id == owner.id,
+        ).one_or_none()
+
+        if row is not None and row.revoked:
+            # A used refresh token came back: assume theft and kill every session.
+            revoke_all_refresh_tokens(db, owner.id)
+            db.commit()
+            raise _unauthorized("Refresh token already used. Please log in again.")
+
+        raise _unauthorized()
+
     return issue_token_pair(db, owner)
 
 

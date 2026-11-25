@@ -209,6 +209,8 @@ def purchase_list(purchases: list[m.Purchase]) -> dict:
 def _apply_purchase(db: Session, p: m.Purchase, journal: m.Journal, data: s.PurchaseUpdate):
     supplier = get_or_404(db, m.Supplier, data.supplier_id, "Supplier")
     fish = get_or_404(db, m.Fish, data.fish_id, "Fish")
+    if not fish.is_active and p.fish_id != fish.id:
+        raise invalid("Fish is inactive")
     if not supplier.is_active and p.supplier_id != supplier.id:
         raise invalid("Supplier is inactive")
     amount = money(data.quantity * data.rate)
@@ -292,6 +294,8 @@ def default_rate(db: Session, hotel_id: int, fish_id: int) -> Optional[Decimal]:
 def _apply_sale(db: Session, x: m.HotelSale, journal: m.Journal, data: s.HotelSaleUpdate):
     hotel = get_or_404(db, m.Hotel, data.hotel_id, "Hotel")
     fish = get_or_404(db, m.Fish, data.fish_id, "Fish")
+    if not fish.is_active and x.fish_id != fish.id:
+        raise invalid("Fish is inactive")
     if not hotel.is_active and x.hotel_id != hotel.id:
         raise invalid("Hotel is inactive")
     agreed = default_rate(db, hotel.id, fish.id)
